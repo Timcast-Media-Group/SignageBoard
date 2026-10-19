@@ -361,3 +361,7 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/SignageBoard.Web/appsettings.Development.json
+/SignageBoard.Web/noticeboard.db
+/SignageBoard.Web/noticeboard.db-shm
+/SignageBoard.Web/noticeboard.db-wal
