@@ -3,6 +3,7 @@ global using Microsoft.Data.Sqlite;
 using SignageBoard.Web.Components;
 using SignageBoard.Web.Data;
 using SignageBoard.Web.Services;
+using System.Security.Claims;
 
 namespace SignageBoard.Web
 {
@@ -15,6 +16,8 @@ namespace SignageBoard.Web
             // Add services to the container.
             builder.Services.AddRazorComponents()
                 .AddInteractiveServerComponents();
+            builder.Services.AddValidation();
+            builder.Services.AddOpenApi();
 
             builder.Services.AddOptions<BoardOptions>()
                 .Bind(builder.Configuration.GetSection(BoardOptions.Section))
@@ -46,6 +49,17 @@ namespace SignageBoard.Web
                 app.UseExceptionHandler("/Error");
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
+                app.MapOpenApi(); // serves /openapi/v1.json
+                app.UseSwaggerUI(o =>
+                {
+                    o.SwaggerEndpoint("/openapi/v1.json", "SignageBoard v1");
+                    o.RoutePrefix = "swagger"; // UI at /swagger
+                });
+            }
+            else
+            {
+                app.UseExceptionHandler("/Error");
+                app.UseHsts();
             }
 
             app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
@@ -74,6 +88,17 @@ namespace SignageBoard.Web
                     INSERT OR IGNORE INTO BoardState (Id, Version) VALUES (1, 0);
                     """);
             }
+
+            app.MapGet("/api/board/notes", (NoteService svc) => svc.GetActiveAsync());
+            app.MapPost("/notes", async (CreateNoteDto dto, NoteService svc, ClaimsPrincipal user) =>
+            {
+                var createdBy = user.FindFirst("preferred_username")?.Value ?? "dev";
+                var note = await svc.CreateNoteAsync(dto, createdBy);
+                return Results.Created($"/api/board/notes/{note.Id}", note);
+            })
+            .WithName("CreateNote")
+            .Produces<Note>(StatusCodes.Status201Created)
+            .ProducesValidationProblem();
 
             app.Run();
         }

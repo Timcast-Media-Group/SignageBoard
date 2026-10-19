@@ -4,7 +4,7 @@
     {
         public string Id { get; set; }
         public string Body { get; set; }
-        public int Priority { get; set; }
+        public NotePriority Priority { get; set; }
         public int SortOrder { get; set; }
         public DateTime? ExpiresAt { get; set; }
         public string CreatedBy { get; set; }
@@ -18,5 +18,12 @@
         Draft = 1,
         Unpublished = 2,
         Published = 3
+    }
+
+    public enum NotePriority
+    {
+        Normal = 0,
+        Important = 1,
+        Urgent = 2
     }
 }
