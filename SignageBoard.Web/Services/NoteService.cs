@@ -27,8 +27,8 @@ namespace SignageBoard.Web.Services
             var notes = await conn.QueryAsync<Note>("""
                 SELECT * FROM Notes
                 WHERE Status <> @archived
-                ORDER BY Status DESC, SortOrder
-                """, new { archived = NoteStatus.Archived });
+                ORDER BY Status DESC, Priority = @urgent DESC, CreatedAt DESC, SortOrder DESC
+                """, new { archived = NoteStatus.Archived, urgent = NotePriority.Urgent });
             return notes.AsList();
         }
 
@@ -37,12 +37,33 @@ namespace SignageBoard.Web.Services
             using var conn = _db.Create();
             using var tx = conn.BeginTransaction(deferred: true);
 
-            var version = await conn.ExecuteScalarAsync<long>(
-                "SELECT Version FROM BoardState WHERE Id = 1", transaction: tx);
+            var state = await conn.QuerySingleAsync<(long Version, long SingleNoteMode)>(
+                "SELECT Version, SingleNoteMode FROM BoardState WHERE Id = 1", transaction: tx);
             var notes = await QueryActiveAsync(conn, tx);
 
             tx.Commit();
-            return new BoardSnapshot(version, notes);
+            return new BoardSnapshot(state.Version, state.SingleNoteMode != 0, notes);
+        }
+
+        public async Task<bool> GetSingleNoteModeAsync()
+        {
+            using var conn = _db.Create();
+            return await conn.ExecuteScalarAsync<long>(
+                "SELECT SingleNoteMode FROM BoardState WHERE Id = 1") != 0;
+        }
+
+        public async Task SetSingleNoteModeAsync(bool enabled)
+        {
+            using var conn = _db.Create();
+            using var tx = conn.BeginTransaction(deferred: false);
+
+            await conn.ExecuteAsync("""
+                UPDATE BoardState
+                SET SingleNoteMode = @mode, Version = Version + 1
+                WHERE Id = 1 AND SingleNoteMode <> @mode
+                """, new { mode = enabled ? 1 : 0 }, tx);
+
+            tx.Commit();
         }
 
         public async Task DeleteNoteAsync(string noteId)
@@ -101,9 +122,9 @@ namespace SignageBoard.Web.Services
             };
 
             await conn.ExecuteAsync("""
-        INSERT INTO Notes (Id, Body, Priority, SortOrder, ExpiresAt, CreatedBy, CreatedAt, UpdatedAt, Status)
-        VALUES (@Id, @Body, @Priority, @SortOrder, @ExpiresAt, @CreatedBy, @CreatedAt, @UpdatedAt, @Status)
-        """, newNote, tx);
+                INSERT INTO Notes (Id, Body, Priority, SortOrder, ExpiresAt, CreatedBy, CreatedAt, UpdatedAt, Status)
+                VALUES (@Id, @Body, @Priority, @SortOrder, @ExpiresAt, @CreatedBy, @CreatedAt, @UpdatedAt, @Status)
+                """, newNote, tx);
 
             await conn.ExecuteAsync(
                 "UPDATE BoardState SET Version = Version + 1 WHERE Id = 1", transaction: tx);
@@ -157,8 +178,8 @@ namespace SignageBoard.Web.Services
             var notes = await conn.QueryAsync<Note>("""
                 SELECT * FROM Notes
                 WHERE Status = @published AND (ExpiresAt IS NULL OR ExpiresAt > @now)
-                ORDER BY SortOrder
-                """, new { published = NoteStatus.Published, now = DateTime.UtcNow }, tx);
+                ORDER BY Priority = @urgent DESC, CreatedAt DESC, SortOrder DESC
+                """, new { published = NoteStatus.Published, urgent = NotePriority.Urgent, now = DateTime.UtcNow }, tx);
             return notes.AsList();
         }
 

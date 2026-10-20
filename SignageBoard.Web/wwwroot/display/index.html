@@ -53,6 +53,10 @@
         font-size: 72px;
     }
 
+    #board.single {
+        justify-content: center;
+    }
+
     #board.cols {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -144,6 +148,8 @@
 
     const params = new URLSearchParams(location.search);
     const pollSeconds = Math.min(300, Math.max(1, Number(params.get("poll")) || 2));
+    const keyStorage = "signageboard.displayKey";
+    const displayKey = resolveKey();
 
     const board = document.getElementById("board");
     const empty = document.getElementById("empty");
@@ -160,7 +166,28 @@
     let etag = null;
     let notes = [];
     let renderedKey = null;
+    let singleMode = false;
     let failures = 0;
+
+    function resolveKey() {
+        const fromUrl = params.get("key");
+        if (fromUrl) {
+            try {
+                localStorage.setItem(keyStorage, fromUrl);
+            } catch (error) {
+            }
+            params.delete("key");
+            const query = params.toString();
+            history.replaceState(null, "", location.pathname + (query ? "?" + query : ""));
+            return fromUrl;
+        }
+
+        try {
+            return localStorage.getItem(keyStorage);
+        } catch (error) {
+            return null;
+        }
+    }
 
     function expiryTime(note) {
         const value = note.expiresAt;
@@ -171,15 +198,10 @@
     }
 
     function visibleNotes(now) {
-        return notes
-            .filter(note => {
-                const expires = expiryTime(note);
-                return expires === null || expires > now;
-            })
-            .map((note, index) => ({ note, index }))
-            .sort((a, b) =>
-                ((b.note.priority === URGENT) - (a.note.priority === URGENT)) || (a.index - b.index))
-            .map(entry => entry.note);
+        return notes.filter(note => {
+            const expires = expiryTime(note);
+            return expires === null || expires > now;
+        });
     }
 
     function buildNote(note) {
@@ -201,8 +223,9 @@
     }
 
     function render(force) {
-        const list = visibleNotes(Date.now());
-        const key = list.map(note => note.id).join("|");
+        const all = visibleNotes(Date.now());
+        const list = singleMode ? all.slice(0, 1) : all;
+        const key = (singleMode ? "single:" : "all:") + list.map(note => note.id).join("|");
         if (!force && key === renderedKey) return;
         renderedKey = key;
 
@@ -210,6 +233,7 @@
         for (const note of list) fragment.appendChild(buildNote(note));
 
         board.textContent = "";
+        board.classList.toggle("single", singleMode);
         board.appendChild(fragment);
         empty.style.display = list.length ? "none" : "flex";
         fit();
@@ -219,9 +243,9 @@
         return board.scrollHeight > board.clientHeight + 1 || board.scrollWidth > board.clientWidth + 1;
     }
 
-    function fitWith(columns) {
+    function fitWith(columns, maxRatio) {
         board.classList.toggle("cols", columns);
-        const max = window.innerHeight * 0.085;
+        const max = window.innerHeight * maxRatio;
         const min = window.innerHeight * 0.015;
 
         board.style.fontSize = max + "px";
@@ -243,35 +267,49 @@
         const count = board.childElementCount;
         if (count === 0) return;
 
-        const single = fitWith(false);
+        if (singleMode) {
+            fitWith(false, 0.16);
+            return;
+        }
+
+        const single = fitWith(false, 0.085);
         if (count < 3) return;
 
-        const double = fitWith(true);
-        if (double < single * 1.15) fitWith(false);
+        const double = fitWith(true, 0.085);
+        if (double < single * 1.15) fitWith(false, 0.085);
     }
 
     async function poll() {
-        try {
-            const headers = {};
-            if (etag) headers["If-None-Match"] = etag;
+        let problem = null;
 
-            const response = await fetch("/api/board", { headers, cache: "no-store", credentials: "same-origin" });
+        if (!displayKey) {
+            problem = "NO DISPLAY KEY";
+        } else {
+            try {
+                const headers = { "X-Display-Key": displayKey };
+                if (etag) headers["If-None-Match"] = etag;
 
-            if (response.status === 200) {
-                const data = await response.json();
-                etag = response.headers.get("ETag");
-                notes = Array.isArray(data.notes) ? data.notes : [];
-                render(true);
-            } else if (response.status !== 304) {
-                throw new Error("HTTP " + response.status);
+                const response = await fetch("/api/board", { headers, cache: "no-store", credentials: "same-origin" });
+
+                if (response.status === 200) {
+                    const data = await response.json();
+                    etag = response.headers.get("ETag");
+                    notes = Array.isArray(data.notes) ? data.notes : [];
+                    singleMode = data.singleNoteMode === true;
+                    render(true);
+                } else if (response.status === 404) {
+                    problem = "ACCESS DENIED";
+                } else if (response.status !== 304) {
+                    problem = "OFFLINE";
+                }
+            } catch (error) {
+                problem = "OFFLINE";
             }
-
-            failures = 0;
-        } catch (error) {
-            failures++;
         }
 
-        offline.style.display = failures >= 2 ? "block" : "none";
+        failures = problem ? failures + 1 : 0;
+        offline.textContent = problem || "";
+        offline.style.display = problem && (problem !== "OFFLINE" || failures >= 2) ? "block" : "none";
         setTimeout(poll, pollSeconds * 1000);
     }
 

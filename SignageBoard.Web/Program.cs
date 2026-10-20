@@ -27,6 +27,7 @@ namespace SignageBoard.Web
 
             builder.Services.AddSingleton(new SqliteConnectionFactory(
                 builder.Configuration.GetConnectionString("Board")!));
+            builder.Services.AddSingleton<DisplayGateFilter>();
             builder.Services.AddScoped<NoteService>();
 
             //builder.Services
@@ -86,9 +87,14 @@ namespace SignageBoard.Web
                         CreatedAt TEXT NOT NULL,
                         UpdatedAt TEXT NOT NULL,
                         Status INTEGER NOT NULL DEFAULT 0);
-                    CREATE TABLE IF NOT EXISTS BoardState (Id INTEGER PRIMARY KEY CHECK (Id = 1), Version INTEGER NOT NULL);
+                    CREATE TABLE IF NOT EXISTS BoardState (Id INTEGER PRIMARY KEY CHECK (Id = 1), Version INTEGER NOT NULL, SingleNoteMode INTEGER NOT NULL DEFAULT 0);
                     INSERT OR IGNORE INTO BoardState (Id, Version) VALUES (1, 0);
                     """);
+
+                var hasSingleNoteMode = conn.ExecuteScalar<long>(
+                    "SELECT COUNT(*) FROM pragma_table_info('BoardState') WHERE name = 'SingleNoteMode'") > 0;
+                if (!hasSingleNoteMode)
+                    conn.Execute("ALTER TABLE BoardState ADD COLUMN SingleNoteMode INTEGER NOT NULL DEFAULT 0");
             }
 
             var board = app.MapGroup("/api/board");
@@ -112,7 +118,8 @@ namespace SignageBoard.Web
             .WithName("GetBoard")
             .WithSummary("Current board snapshot for the TV display")
             .Produces<BoardSnapshot>(StatusCodes.Status200OK)
-            .Produces(StatusCodes.Status304NotModified);
+            .Produces(StatusCodes.Status304NotModified)
+            .AddEndpointFilter<DisplayGateFilter>();
 
             board.MapGet("/notes", (NoteService svc) => svc.GetActiveAsync());
 

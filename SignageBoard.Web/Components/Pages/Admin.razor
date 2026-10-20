@@ -73,6 +73,17 @@
             </EditForm>
         </section>
 
+        <section class="card display-mode">
+            <label class="switch-row" for="single-mode">
+                <span class="switch-text">
+                    <span class="switch-title">One note at a time</span>
+                    <span class="hint">The TV shows only the top note: urgent first, then newest.</span>
+                </span>
+                <input id="single-mode" type="checkbox" role="switch" class="switch"
+                       checked="@singleMode" disabled="@busy" @onchange="ToggleSingleModeAsync" />
+            </label>
+        </section>
+
         <section>
             <h2>Published <span class="count">@ActiveCount of @Options.Value.MaxNotes on the board</span></h2>
             @if (notes is null)
@@ -112,12 +123,12 @@
 </div>
 
 @code {
-    private const int MaxBodyLength = 280;
     private const string SignInRequired = "You need to be signed in to make changes.";
     private static readonly TimeZoneInfo BoardZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
 
     private CreateNoteDto model = new();
     private EditContext editContext = default!;
+    private ValidationMessageStore lengthMessages = default!;
     private DateTime? expiresLocal;
     private int typedLength;
 
@@ -127,24 +138,53 @@
 
     private AlertMessage? alert;
     private bool busy;
+    private bool singleMode;
     private string? confirmDeleteId;
     private CancellationTokenSource? confirmCts;
 
     private int ActiveCount => published.Count(n => !IsExpired(n));
+
+    private int MaxBodyLength => Options.Value.MaxNoteLength;
+
+    private string? OnTvId => singleMode ? published.FirstOrDefault(n => !IsExpired(n))?.Id : null;
 
     private static string MinExpiry =>
         TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoardZone).ToString("yyyy-MM-ddTHH:mm");
 
     protected override async Task OnInitializedAsync()
     {
-        editContext = new EditContext(model);
+        CreateEditContext();
         await LoadAsync();
+    }
+
+    private void CreateEditContext()
+    {
+        editContext = new EditContext(model);
+        lengthMessages = new ValidationMessageStore(editContext);
+        editContext.OnValidationRequested += (_, _) => ValidateBodyLength();
+        editContext.OnFieldChanged += (_, e) =>
+        {
+            if (e.FieldIdentifier.FieldName == nameof(CreateNoteDto.Body))
+                ValidateBodyLength();
+        };
+    }
+
+    private void ValidateBodyLength()
+    {
+        lengthMessages.Clear();
+        if ((model.Body?.Length ?? 0) > MaxBodyLength)
+            lengthMessages.Add(() => model.Body, $"Keep it to {MaxBodyLength} characters or fewer.");
+        editContext.NotifyValidationStateChanged();
     }
 
     private RenderFragment NoteItem(Note note) =>
         @<li @key="note.Id" class="note prio-@PriorityClass(note.Priority) @(IsExpired(note) ? "expired" : null)">
             <p class="note-body">@note.Body</p>
             <div class="meta">
+                @if (note.Id == OnTvId)
+                {
+                    <span class="badge badge-ontv">On TV</span>
+                }
                 <span class="badge badge-@PriorityClass(note.Priority)">@note.Priority</span>
                 <span>@ExpiryText(note)</span>
                 <span>by @note.CreatedBy</span>
@@ -183,6 +223,17 @@
             await Notes.CreateNoteAsync(model, author);
             ResetForm();
         }, publish ? "Note published." : "Draft saved.");
+    }
+
+    private async Task ToggleSingleModeAsync(ChangeEventArgs e)
+    {
+        if (busy)
+            return;
+
+        var enabled = e.Value is true;
+        singleMode = enabled;
+        await RunAsync(_ => Notes.SetSingleNoteModeAsync(enabled),
+            enabled ? "The TV now shows one note at a time." : "The TV now shows all notes.");
     }
 
     private Task PublishAsync(Note note) =>
@@ -288,6 +339,7 @@
         try
         {
             notes = await Notes.GetAllAsync();
+            singleMode = await Notes.GetSingleNoteModeAsync();
             published = notes.Where(n => n.Status == NoteStatus.Published).ToList();
             drafts = notes.Where(n => n.Status == NoteStatus.Draft).ToList();
         }
@@ -302,7 +354,7 @@
     private void ResetForm()
     {
         model = new CreateNoteDto();
-        editContext = new EditContext(model);
+        CreateEditContext();
         expiresLocal = null;
         typedLength = 0;
     }
