@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notice board</title>
+<style>
+    :root {
+        --bg: #000000;
+        --text: #fafaf7;
+        --muted: #9aa1ab;
+        --card: #12161c;
+        --edge: #3b434e;
+        --amber: #ffb22e;
+        --red: #ff4438;
+        --red-card: #2b0d0b;
+    }
+
+    *, *::before, *::after {
+        box-sizing: border-box;
+        cursor: none !important;
+    }
+
+    html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+        scrollbar-width: none;
+        -webkit-font-smoothing: antialiased;
+    }
+
+    ::-webkit-scrollbar {
+        display: none;
+    }
+
+    #stage {
+        position: fixed;
+        inset: 0;
+        padding: 10vh 4vw 4vh;
+    }
+
+    #board {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 0.45em;
+        font-size: 72px;
+    }
+
+    #board.cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-content: start;
+        column-gap: 0.6em;
+        row-gap: 0.45em;
+    }
+
+    .note {
+        padding: 0.32em 0.55em 0.38em;
+        font-weight: 600;
+        line-height: 1.18;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: var(--card);
+        border-left: 0.2em solid var(--edge);
+        border-radius: 0.18em;
+    }
+
+    .note.important {
+        border-left-color: var(--amber);
+    }
+
+    .note.urgent {
+        background: var(--red-card);
+        border-left-color: var(--red);
+    }
+
+    .tag {
+        display: block;
+        margin-bottom: 0.3em;
+        font-size: 0.4em;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+    }
+
+    .important .tag {
+        color: var(--amber);
+    }
+
+    .urgent .tag {
+        color: var(--red);
+    }
+
+    #empty {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font-size: 5vh;
+        font-weight: 600;
+        color: #4a515b;
+    }
+
+    #clock {
+        position: fixed;
+        top: 3vh;
+        right: 4vw;
+        font-size: 4.5vh;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+    }
+
+    #offline {
+        position: fixed;
+        top: 3.8vh;
+        left: 4vw;
+        display: none;
+        font-size: 2.6vh;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        color: var(--red);
+    }
+</style>
+</head>
+<body>
+<div id="clock"></div>
+<div id="offline">OFFLINE</div>
+<div id="stage"><div id="board"></div></div>
+<div id="empty">No notices</div>
+<script>
+(() => {
+    "use strict";
+
+    const IMPORTANT = 1;
+    const URGENT = 2;
+
+    const params = new URLSearchParams(location.search);
+    const pollSeconds = Math.min(300, Math.max(1, Number(params.get("poll")) || 2));
+
+    const board = document.getElementById("board");
+    const empty = document.getElementById("empty");
+    const clock = document.getElementById("clock");
+    const offline = document.getElementById("offline");
+
+    const clockFormat = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        weekday: "short",
+        hour: "numeric",
+        minute: "2-digit"
+    });
+
+    let etag = null;
+    let notes = [];
+    let renderedKey = null;
+    let failures = 0;
+
+    function expiryTime(note) {
+        const value = note.expiresAt;
+        if (!value) return null;
+        const hasZone = /([zZ]|[+-]\d\d:?\d\d)$/.test(value);
+        const time = Date.parse(hasZone ? value : value + "Z");
+        return Number.isNaN(time) ? null : time;
+    }
+
+    function visibleNotes(now) {
+        return notes
+            .filter(note => {
+                const expires = expiryTime(note);
+                return expires === null || expires > now;
+            })
+            .map((note, index) => ({ note, index }))
+            .sort((a, b) =>
+                ((b.note.priority === URGENT) - (a.note.priority === URGENT)) || (a.index - b.index))
+            .map(entry => entry.note);
+    }
+
+    function buildNote(note) {
+        const card = document.createElement("div");
+        card.className = "note";
+
+        if (note.priority === URGENT || note.priority === IMPORTANT) {
+            card.classList.add(note.priority === URGENT ? "urgent" : "important");
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = note.priority === URGENT ? "URGENT" : "IMPORTANT";
+            card.appendChild(tag);
+        }
+
+        const body = document.createElement("span");
+        body.textContent = note.body || "";
+        card.appendChild(body);
+        return card;
+    }
+
+    function render(force) {
+        const list = visibleNotes(Date.now());
+        const key = list.map(note => note.id).join("|");
+        if (!force && key === renderedKey) return;
+        renderedKey = key;
+
+        const fragment = document.createDocumentFragment();
+        for (const note of list) fragment.appendChild(buildNote(note));
+
+        board.textContent = "";
+        board.appendChild(fragment);
+        empty.style.display = list.length ? "none" : "flex";
+        fit();
+    }
+
+    function overflowing() {
+        return board.scrollHeight > board.clientHeight + 1 || board.scrollWidth > board.clientWidth + 1;
+    }
+
+    function fitWith(columns) {
+        board.classList.toggle("cols", columns);
+        const max = window.innerHeight * 0.085;
+        const min = window.innerHeight * 0.015;
+
+        board.style.fontSize = max + "px";
+        if (!overflowing()) return max;
+
+        let low = min;
+        let high = max;
+        for (let i = 0; i < 16; i++) {
+            const mid = (low + high) / 2;
+            board.style.fontSize = mid + "px";
+            if (overflowing()) high = mid;
+            else low = mid;
+        }
+        board.style.fontSize = low + "px";
+        return low;
+    }
+
+    function fit() {
+        const count = board.childElementCount;
+        if (count === 0) return;
+
+        const single = fitWith(false);
+        if (count < 3) return;
+
+        const double = fitWith(true);
+        if (double < single * 1.15) fitWith(false);
+    }
+
+    async function poll() {
+        try {
+            const headers = {};
+            if (etag) headers["If-None-Match"] = etag;
+
+            const response = await fetch("/api/board", { headers, cache: "no-store", credentials: "same-origin" });
+
+            if (response.status === 200) {
+                const data = await response.json();
+                etag = response.headers.get("ETag");
+                notes = Array.isArray(data.notes) ? data.notes : [];
+                render(true);
+            } else if (response.status !== 304) {
+                throw new Error("HTTP " + response.status);
+            }
+
+            failures = 0;
+        } catch (error) {
+            failures++;
+        }
+
+        offline.style.display = failures >= 2 ? "block" : "none";
+        setTimeout(poll, pollSeconds * 1000);
+    }
+
+    function tick() {
+        const text = clockFormat.format(new Date());
+        if (clock.textContent !== text) clock.textContent = text;
+        render(false);
+    }
+
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(fit, 150);
+    });
+
+    tick();
+    setInterval(tick, 1000);
+    poll();
+})();
+</script>
+</body>
+</html>

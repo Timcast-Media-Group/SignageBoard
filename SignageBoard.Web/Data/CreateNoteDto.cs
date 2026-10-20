@@ -11,5 +11,7 @@ namespace SignageBoard.Web.Data
         public NotePriority Priority { get; set; } = NotePriority.Normal;
 
         public DateTimeOffset? ExpiresAt { get; set; }
+
+        public bool Publish { get; set; }
     }
 }

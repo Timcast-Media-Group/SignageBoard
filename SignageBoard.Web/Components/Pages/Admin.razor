@@ -1,0 +1,340 @@
+﻿@page "/admin"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.Extensions.Options
+@using SignageBoard.Web.Data
+@using SignageBoard.Web.Services
+@using System.ComponentModel.DataAnnotations
+@implements IDisposable
+@inject NoteService Notes
+@inject AuthenticationStateProvider AuthState
+@inject IWebHostEnvironment Env
+@inject IOptions<BoardOptions> Options
+@inject ILogger<Admin> Logger
+
+<PageTitle>Notice board admin</PageTitle>
+
+<div class="admin">
+    <div class="inner">
+        <header class="top">
+            <h1>Notice board</h1>
+            <a class="display-link" href="/display/index.html" target="_blank" rel="noopener">Open TV view</a>
+        </header>
+
+        @if (alert is not null)
+        {
+            <div class="alert @(alert.IsError ? "alert-error" : "alert-ok")" role="@(alert.IsError ? "alert" : "status")">
+                <span class="alert-text">@alert.Text</span>
+                <button type="button" class="alert-close" aria-label="Dismiss" @onclick="DismissAlert">&times;</button>
+            </div>
+        }
+
+        <section class="card compose">
+            <h2>New note</h2>
+            <EditForm EditContext="editContext">
+                <DataAnnotationsValidator />
+
+                <div class="field">
+                    <div class="label-row">
+                        <label for="note-body">Message</label>
+                        <span class="counter @(typedLength > MaxBodyLength ? "over" : null)">@typedLength / @MaxBodyLength</span>
+                    </div>
+                    <InputTextArea id="note-body" rows="4" placeholder="What should the board say?"
+                                   @bind-Value="model.Body" @oninput="OnBodyInput" />
+                    <ValidationMessage For="() => model.Body" />
+                </div>
+
+                <div class="field">
+                    <label for="note-priority">Priority</label>
+                    <InputSelect id="note-priority" @bind-Value="model.Priority">
+                        @foreach (var priority in Enum.GetValues<NotePriority>())
+                        {
+                            <option value="@priority">@priority</option>
+                        }
+                    </InputSelect>
+                </div>
+
+                <div class="field">
+                    <label for="note-expires">Expires <span class="hint">optional, Eastern time</span></label>
+                    <div class="expiry-row">
+                        <InputDate id="note-expires" Type="InputDateType.DateTimeLocal" min="@MinExpiry" @bind-Value="expiresLocal" />
+                        @if (expiresLocal is not null)
+                        {
+                            <button type="button" class="btn btn-quiet" @onclick="ClearExpiry">Clear</button>
+                        }
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-primary" disabled="@busy" @onclick="() => SaveAsync(false)">Save as draft</button>
+                    <button type="button" class="btn btn-secondary" disabled="@busy" @onclick="() => SaveAsync(true)">Save and publish</button>
+                </div>
+            </EditForm>
+        </section>
+
+        <section>
+            <h2>Published <span class="count">@ActiveCount of @Options.Value.MaxNotes on the board</span></h2>
+            @if (notes is null)
+            {
+                <p class="empty">Loading…</p>
+            }
+            else if (published.Count == 0)
+            {
+                <p class="empty">Nothing is on the board.</p>
+            }
+            else
+            {
+                <ul class="notes">
+                    @foreach (var note in published)
+                    {
+                        @NoteItem(note)
+                    }
+                </ul>
+            }
+
+            <h2>Drafts <span class="count">@drafts.Count</span></h2>
+            @if (notes is not null && drafts.Count == 0)
+            {
+                <p class="empty">No drafts.</p>
+            }
+            else if (notes is not null)
+            {
+                <ul class="notes">
+                    @foreach (var note in drafts)
+                    {
+                        @NoteItem(note)
+                    }
+                </ul>
+            }
+        </section>
+    </div>
+</div>
+
+@code {
+    private const int MaxBodyLength = 280;
+    private const string SignInRequired = "You need to be signed in to make changes.";
+    private static readonly TimeZoneInfo BoardZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+
+    private CreateNoteDto model = new();
+    private EditContext editContext = default!;
+    private DateTime? expiresLocal;
+    private int typedLength;
+
+    private IReadOnlyList<Note>? notes;
+    private List<Note> published = [];
+    private List<Note> drafts = [];
+
+    private AlertMessage? alert;
+    private bool busy;
+    private string? confirmDeleteId;
+    private CancellationTokenSource? confirmCts;
+
+    private int ActiveCount => published.Count(n => !IsExpired(n));
+
+    private static string MinExpiry =>
+        TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BoardZone).ToString("yyyy-MM-ddTHH:mm");
+
+    protected override async Task OnInitializedAsync()
+    {
+        editContext = new EditContext(model);
+        await LoadAsync();
+    }
+
+    private RenderFragment NoteItem(Note note) =>
+        @<li @key="note.Id" class="note prio-@PriorityClass(note.Priority) @(IsExpired(note) ? "expired" : null)">
+            <p class="note-body">@note.Body</p>
+            <div class="meta">
+                <span class="badge badge-@PriorityClass(note.Priority)">@note.Priority</span>
+                <span>@ExpiryText(note)</span>
+                <span>by @note.CreatedBy</span>
+            </div>
+            <div class="note-actions">
+                @if (note.Status == NoteStatus.Published)
+                {
+                    <button type="button" class="btn btn-secondary" disabled="@busy" @onclick="() => UnpublishAsync(note)">Unpublish</button>
+                }
+                else
+                {
+                    <button type="button" class="btn btn-primary" disabled="@(busy || IsExpired(note))" @onclick="() => PublishAsync(note)">Publish</button>
+                }
+                <button type="button" class="btn @(confirmDeleteId == note.Id ? "btn-danger" : "btn-outline-danger")"
+                        disabled="@busy" @onclick="() => DeleteClickedAsync(note)">
+                    @(confirmDeleteId == note.Id ? "Tap again to delete" : "Delete")
+                </button>
+            </div>
+        </li>;
+
+    private void OnBodyInput(ChangeEventArgs e) => typedLength = e.Value?.ToString()?.Length ?? 0;
+
+    private void ClearExpiry() => expiresLocal = null;
+
+    private void DismissAlert() => alert = null;
+
+    private async Task SaveAsync(bool publish)
+    {
+        if (busy || !editContext.Validate())
+            return;
+
+        await RunAsync(async author =>
+        {
+            model.ExpiresAt = ToBoardOffset(expiresLocal);
+            model.Publish = publish;
+            await Notes.CreateNoteAsync(model, author);
+            ResetForm();
+        }, publish ? "Note published." : "Draft saved.");
+    }
+
+    private Task PublishAsync(Note note) =>
+        RunAsync(_ => Notes.PublishNoteAsync(note.Id), "Note published.");
+
+    private Task UnpublishAsync(Note note) =>
+        RunAsync(_ => Notes.UnpublishNoteAsync(note.Id), "Note moved to drafts.");
+
+    private async Task DeleteClickedAsync(Note note)
+    {
+        if (confirmDeleteId == note.Id)
+        {
+            CancelDeleteConfirm();
+            await RunAsync(_ => Notes.DeleteNoteAsync(note.Id), "Note deleted.");
+            return;
+        }
+
+        CancelDeleteConfirm();
+        confirmDeleteId = note.Id;
+        confirmCts = new CancellationTokenSource();
+        _ = ExpireDeleteConfirmAsync(note.Id, confirmCts.Token);
+    }
+
+    private async Task ExpireDeleteConfirmAsync(string noteId, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (confirmDeleteId != noteId)
+            return;
+
+        confirmDeleteId = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CancelDeleteConfirm()
+    {
+        confirmCts?.Cancel();
+        confirmCts?.Dispose();
+        confirmCts = null;
+        confirmDeleteId = null;
+    }
+
+    private async Task RunAsync(Func<string, Task> action, string successMessage)
+    {
+        if (busy)
+            return;
+
+        busy = true;
+        alert = null;
+
+        try
+        {
+            var author = await ResolveAuthorAsync();
+            if (author is null)
+            {
+                alert = new AlertMessage(SignInRequired, true);
+                return;
+            }
+
+            await action(author);
+            alert = new AlertMessage(successMessage, false);
+        }
+        catch (ValidationException ex)
+        {
+            alert = new AlertMessage(ex.Message, true);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            alert = new AlertMessage(ex.Message, true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Board action failed");
+            alert = new AlertMessage("Something went wrong. Please try again.", true);
+        }
+        finally
+        {
+            busy = false;
+            await LoadAsync();
+        }
+    }
+
+    private async Task<string?> ResolveAuthorAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        var user = state.User;
+
+        if (user.Identity?.IsAuthenticated == true)
+            return user.FindFirst("preferred_username")?.Value;
+
+        return Env.IsDevelopment() ? "dev" : null;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            notes = await Notes.GetAllAsync();
+            published = notes.Where(n => n.Status == NoteStatus.Published).ToList();
+            drafts = notes.Where(n => n.Status == NoteStatus.Draft).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load notes");
+            notes ??= [];
+            alert = new AlertMessage("Couldn't load notes. Try again in a moment.", true);
+        }
+    }
+
+    private void ResetForm()
+    {
+        model = new CreateNoteDto();
+        editContext = new EditContext(model);
+        expiresLocal = null;
+        typedLength = 0;
+    }
+
+    private static DateTimeOffset? ToBoardOffset(DateTime? local)
+    {
+        if (local is not { } value)
+            return null;
+
+        var wallClock = DateTime.SpecifyKind(value, DateTimeKind.Unspecified);
+        if (BoardZone.IsInvalidTime(wallClock))
+            throw new ValidationException("That time is skipped by the daylight saving change. Pick another time.");
+
+        return new DateTimeOffset(wallClock, BoardZone.GetUtcOffset(wallClock));
+    }
+
+    private static bool IsExpired(Note note) =>
+        note.ExpiresAt is { } expires && expires <= DateTime.UtcNow;
+
+    private static string ExpiryText(Note note)
+    {
+        if (note.ExpiresAt is not { } expires)
+            return "No expiry";
+
+        var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(expires, DateTimeKind.Utc), BoardZone);
+        var label = IsExpired(note) ? "Expired" : "Expires";
+        return $"{label} {local:ddd MMM d, h:mm tt}";
+    }
+
+    private static string PriorityClass(NotePriority priority) => priority.ToString().ToLowerInvariant();
+
+    public void Dispose() => CancelDeleteConfirm();
+
+    private sealed record AlertMessage(string Text, bool IsError);
+}

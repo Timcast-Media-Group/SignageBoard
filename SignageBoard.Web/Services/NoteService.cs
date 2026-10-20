@@ -18,10 +18,49 @@ namespace SignageBoard.Web.Services
         public async Task<IReadOnlyList<Note>> GetActiveAsync()
         {
             using var conn = _db.Create();
-            var notes = await conn.QueryAsync<Note>(
-                "SELECT * FROM Notes WHERE ExpiresAt IS NULL OR ExpiresAt > @now ORDER BY SortOrder",
-                new { now = DateTime.UtcNow });
+            return await QueryActiveAsync(conn, null);
+        }
+
+        public async Task<IReadOnlyList<Note>> GetAllAsync()
+        {
+            using var conn = _db.Create();
+            var notes = await conn.QueryAsync<Note>("""
+                SELECT * FROM Notes
+                WHERE Status <> @archived
+                ORDER BY Status DESC, SortOrder
+                """, new { archived = NoteStatus.Archived });
             return notes.AsList();
+        }
+
+        public async Task<BoardSnapshot> GetBoardAsync()
+        {
+            using var conn = _db.Create();
+            using var tx = conn.BeginTransaction(deferred: true);
+
+            var version = await conn.ExecuteScalarAsync<long>(
+                "SELECT Version FROM BoardState WHERE Id = 1", transaction: tx);
+            var notes = await QueryActiveAsync(conn, tx);
+
+            tx.Commit();
+            return new BoardSnapshot(version, notes);
+        }
+
+        public async Task DeleteNoteAsync(string noteId)
+        {
+            using var conn = _db.Create();
+            using var tx = conn.BeginTransaction(deferred: false);
+
+            var note = await FindLiveNoteAsync(conn, tx, noteId);
+
+            await conn.ExecuteAsync(
+                "UPDATE Notes SET Status = @archived, UpdatedAt = @now WHERE Id = @noteId",
+                new { archived = NoteStatus.Archived, now = DateTime.UtcNow, noteId }, tx);
+
+            if (note.Status == NoteStatus.Published)
+                await conn.ExecuteAsync(
+                    "UPDATE BoardState SET Version = Version + 1 WHERE Id = 1", transaction: tx);
+
+            tx.Commit();
         }
 
         public async Task<Note> CreateNoteAsync(CreateNoteDto dto, string createdBy)
@@ -42,11 +81,8 @@ namespace SignageBoard.Web.Services
 
             var now = DateTime.UtcNow;
 
-            var activeCount = await conn.ExecuteScalarAsync<int>(
-                "SELECT COUNT(*) FROM Notes WHERE ExpiresAt IS NULL OR ExpiresAt > @now",
-                new { now }, tx);
-            if (activeCount >= _opts.Value.MaxNotes)
-                throw new ValidationException($"Board is full ({_opts.Value.MaxNotes} notes max).");
+            if (dto.Publish)
+                await EnsureBoardHasRoomAsync(conn, tx, now);
 
             var nextSort = await conn.ExecuteScalarAsync<int>(
                 "SELECT COALESCE(MAX(SortOrder), -1) + 1 FROM Notes", transaction: tx);
@@ -60,12 +96,13 @@ namespace SignageBoard.Web.Services
                 ExpiresAt = expiresUtc,
                 CreatedBy = createdBy,
                 CreatedAt = now,
-                UpdatedAt = now
+                UpdatedAt = now,
+                Status = dto.Publish ? NoteStatus.Published : NoteStatus.Draft
             };
 
             await conn.ExecuteAsync("""
-        INSERT INTO Notes (Id, Body, Priority, SortOrder, ExpiresAt, CreatedBy, CreatedAt, UpdatedAt)
-        VALUES (@Id, @Body, @Priority, @SortOrder, @ExpiresAt, @CreatedBy, @CreatedAt, @UpdatedAt)
+        INSERT INTO Notes (Id, Body, Priority, SortOrder, ExpiresAt, CreatedBy, CreatedAt, UpdatedAt, Status)
+        VALUES (@Id, @Body, @Priority, @SortOrder, @ExpiresAt, @CreatedBy, @CreatedAt, @UpdatedAt, @Status)
         """, newNote, tx);
 
             await conn.ExecuteAsync(
@@ -73,6 +110,73 @@ namespace SignageBoard.Web.Services
 
             tx.Commit();
             return newNote;
+        }
+
+        public Task<Note> PublishNoteAsync(string noteId) =>
+            SetStatusAsync(noteId, NoteStatus.Published);
+
+        public Task<Note> UnpublishNoteAsync(string noteId) =>
+            SetStatusAsync(noteId, NoteStatus.Draft);
+
+        private async Task<Note> SetStatusAsync(string noteId, NoteStatus status)
+        {
+            using var conn = _db.Create();
+            using var tx = conn.BeginTransaction(deferred: false);
+
+            var note = await FindLiveNoteAsync(conn, tx, noteId);
+
+            if (note.Status == status)
+                return note;
+
+            var now = DateTime.UtcNow;
+
+            if (status == NoteStatus.Published)
+            {
+                if (note.ExpiresAt is { } exp && exp <= now)
+                    throw new ValidationException("Can't publish an expired note.");
+
+                await EnsureBoardHasRoomAsync(conn, tx, now);
+            }
+
+            note.Status = status;
+            note.UpdatedAt = now;
+
+            await conn.ExecuteAsync(
+                "UPDATE Notes SET Status = @Status, UpdatedAt = @UpdatedAt WHERE Id = @Id",
+                note, tx);
+
+            await conn.ExecuteAsync(
+                "UPDATE BoardState SET Version = Version + 1 WHERE Id = 1", transaction: tx);
+
+            tx.Commit();
+            return note;
+        }
+
+        private static async Task<IReadOnlyList<Note>> QueryActiveAsync(SqliteConnection conn, SqliteTransaction? tx)
+        {
+            var notes = await conn.QueryAsync<Note>("""
+                SELECT * FROM Notes
+                WHERE Status = @published AND (ExpiresAt IS NULL OR ExpiresAt > @now)
+                ORDER BY SortOrder
+                """, new { published = NoteStatus.Published, now = DateTime.UtcNow }, tx);
+            return notes.AsList();
+        }
+
+        private static async Task<Note> FindLiveNoteAsync(SqliteConnection conn, SqliteTransaction tx, string noteId) =>
+            await conn.QueryFirstOrDefaultAsync<Note>(
+                "SELECT * FROM Notes WHERE Id = @noteId AND Status <> @archived",
+                new { noteId, archived = NoteStatus.Archived }, tx)
+            ?? throw new KeyNotFoundException($"Note {noteId} not found.");
+
+        private async Task EnsureBoardHasRoomAsync(SqliteConnection conn, SqliteTransaction tx, DateTime now)
+        {
+            var publishedCount = await conn.ExecuteScalarAsync<int>("""
+                SELECT COUNT(*) FROM Notes
+                WHERE Status = @published AND (ExpiresAt IS NULL OR ExpiresAt > @now)
+                """, new { published = NoteStatus.Published, now }, tx);
+
+            if (publishedCount >= _opts.Value.MaxNotes)
+                throw new ValidationException($"Board is full ({_opts.Value.MaxNotes} notes max).");
         }
     }
 }
