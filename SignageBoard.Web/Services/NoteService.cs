@@ -37,12 +37,36 @@ namespace SignageBoard.Web.Services
             using var conn = _db.Create();
             using var tx = conn.BeginTransaction(deferred: true);
 
-            var state = await conn.QuerySingleAsync<(long Version, long SingleNoteMode)>(
-                "SELECT Version, SingleNoteMode FROM BoardState WHERE Id = 1", transaction: tx);
+            var state = await conn.QuerySingleAsync<(long Version, long FontScale, long SingleNoteMode)>(
+                "SELECT Version, FontScale, SingleNoteMode FROM BoardState WHERE Id = 1", transaction: tx);
             var notes = await QueryActiveAsync(conn, tx);
 
             tx.Commit();
-            return new BoardSnapshot(state.Version, state.SingleNoteMode != 0, notes);
+            return new BoardSnapshot(state.Version, (int)state.FontScale, state.SingleNoteMode != 0, notes);
+        }
+
+        public async Task<int> GetFontScaleAsync()
+        {
+            using var conn = _db.Create();
+            return (int)await conn.ExecuteScalarAsync<long>(
+                "SELECT FontScale FROM BoardState WHERE Id = 1");
+        }
+
+        public async Task<int> SetFontScaleAsync(int percent)
+        {
+            var value = (int)(Math.Round(Math.Clamp(percent, 50, 200) / 5.0, MidpointRounding.AwayFromZero) * 5);
+
+            using var conn = _db.Create();
+            using var tx = conn.BeginTransaction(deferred: false);
+
+            await conn.ExecuteAsync("""
+                UPDATE BoardState
+                SET FontScale = @value, Version = Version + 1
+                WHERE Id = 1 AND FontScale <> @value
+                """, new { value }, tx);
+
+            tx.Commit();
+            return value;
         }
 
         public async Task<bool> GetSingleNoteModeAsync()

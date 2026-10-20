@@ -6,14 +6,19 @@
 @using SignageBoard.Web.Data
 @using SignageBoard.Web.Services
 @using System.ComponentModel.DataAnnotations
-@implements IDisposable
+@implements IAsyncDisposable
 @inject NoteService Notes
+@inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
 @inject IWebHostEnvironment Env
 @inject IOptions<BoardOptions> Options
 @inject ILogger<Admin> Logger
 
 <PageTitle>Notice board admin</PageTitle>
+
+<HeadContent>
+    <link rel="stylesheet" href="/display/board.css" />
+</HeadContent>
 
 <div class="admin">
     <div class="inner">
@@ -84,6 +89,37 @@
             </label>
         </section>
 
+        <section class="card preview-card">
+            <h2>Board preview</h2>
+            <div class="preview-frame">
+                <div class="preview-stage" @ref="previewStage"></div>
+            </div>
+
+            <div class="scale-row">
+                <label for="font-scale">Text size: @fontScale%</label>
+                @if (scaleSaved)
+                {
+                    <span class="saved" role="status">Saved</span>
+                }
+            </div>
+            <input id="font-scale" class="slider" type="range" min="50" max="200" step="5"
+                   @bind="fontScale" @bind:event="oninput" @bind:after="PreviewScaleAsync"
+                   @onchange="SaveFontScaleAsync" />
+
+            <div class="preview-actions">
+                <button type="button" class="btn btn-quiet" disabled="@(fontScale == 100)" @onclick="ResetFontScaleAsync">Reset to 100%</button>
+            </div>
+
+            <label class="switch-row preview-drafts" for="preview-drafts">
+                <span class="switch-text">
+                    <span class="switch-title">Include drafts in preview</span>
+                    <span class="hint">Drafts are marked and never appear on the TV.</span>
+                </span>
+                <input id="preview-drafts" type="checkbox" role="switch" class="switch"
+                       checked="@includeDrafts" @onchange="ToggleDraftsAsync" />
+            </label>
+        </section>
+
         <section>
             <h2>Published <span class="count">@ActiveCount of @Options.Value.MaxNotes on the board</span></h2>
             @if (notes is null)
@@ -139,6 +175,13 @@
     private AlertMessage? alert;
     private bool busy;
     private bool singleMode;
+    private int fontScale = 100;
+    private bool includeDrafts;
+    private bool scaleSaved;
+    private CancellationTokenSource? savedCts;
+    private ElementReference previewStage;
+    private IJSObjectReference? boardModule;
+    private bool previewReady;
     private string? confirmDeleteId;
     private CancellationTokenSource? confirmCts;
 
@@ -155,6 +198,24 @@
     {
         CreateEditContext();
         await LoadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        try
+        {
+            boardModule = await JS.InvokeAsync<IJSObjectReference>("import", "/display/board.js");
+            await JS.InvokeVoidAsync("SignageBoard.fitToParent", previewStage);
+            previewReady = true;
+            await RenderPreviewAsync();
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+        {
+            Logger.LogWarning(ex, "Board preview failed to load");
+        }
     }
 
     private void CreateEditContext()
@@ -234,6 +295,107 @@
         singleMode = enabled;
         await RunAsync(_ => Notes.SetSingleNoteModeAsync(enabled),
             enabled ? "The TV now shows one note at a time." : "The TV now shows all notes.");
+    }
+
+    private async Task PreviewScaleAsync()
+    {
+        if (!previewReady)
+            return;
+
+        try
+        {
+            await JS.InvokeVoidAsync("SignageBoard.setScale", previewStage, fontScale);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+        {
+            Logger.LogWarning(ex, "Board preview scale update failed");
+        }
+    }
+
+    private async Task SaveFontScaleAsync()
+    {
+        try
+        {
+            if (await ResolveAuthorAsync() is null)
+            {
+                alert = new AlertMessage(SignInRequired, true);
+                fontScale = await Notes.GetFontScaleAsync();
+            }
+            else
+            {
+                fontScale = await Notes.SetFontScaleAsync(fontScale);
+                ShowSaved();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Saving the text size failed");
+            alert = new AlertMessage("Couldn't save the text size. Please try again.", true);
+        }
+
+        await RenderPreviewAsync();
+    }
+
+    private async Task ResetFontScaleAsync()
+    {
+        fontScale = 100;
+        await PreviewScaleAsync();
+        await SaveFontScaleAsync();
+    }
+
+    private async Task ToggleDraftsAsync(ChangeEventArgs e)
+    {
+        includeDrafts = e.Value is true;
+        await RenderPreviewAsync();
+    }
+
+    private void ShowSaved()
+    {
+        savedCts?.Cancel();
+        savedCts?.Dispose();
+        savedCts = new CancellationTokenSource();
+        scaleSaved = true;
+        _ = HideSavedAsync(savedCts.Token);
+    }
+
+    private async Task HideSavedAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1.5), token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        scaleSaved = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private BoardSnapshot BuildPreviewSnapshot()
+    {
+        IEnumerable<Note> previewNotes = published.Where(n => !IsExpired(n));
+        if (includeDrafts)
+            previewNotes = previewNotes.Concat(drafts.Where(n => !IsExpired(n)));
+
+        return new BoardSnapshot(0, fontScale, singleMode, previewNotes.ToList());
+    }
+
+    private async Task RenderPreviewAsync()
+    {
+        if (!previewReady)
+            return;
+
+        try
+        {
+            await JS.InvokeVoidAsync("SignageBoard.render", previewStage, BuildPreviewSnapshot(), new { showDrafts = includeDrafts });
+            await JS.InvokeVoidAsync("SignageBoard.setScale", previewStage, fontScale);
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+        {
+            Logger.LogWarning(ex, "Board preview render failed");
+        }
     }
 
     private Task PublishAsync(Note note) =>
@@ -320,6 +482,7 @@
         {
             busy = false;
             await LoadAsync();
+            await RenderPreviewAsync();
         }
     }
 
@@ -340,6 +503,7 @@
         {
             notes = await Notes.GetAllAsync();
             singleMode = await Notes.GetSingleNoteModeAsync();
+            fontScale = await Notes.GetFontScaleAsync();
             published = notes.Where(n => n.Status == NoteStatus.Published).ToList();
             drafts = notes.Where(n => n.Status == NoteStatus.Draft).ToList();
         }
@@ -386,7 +550,24 @@
 
     private static string PriorityClass(NotePriority priority) => priority.ToString().ToLowerInvariant();
 
-    public void Dispose() => CancelDeleteConfirm();
+    public async ValueTask DisposeAsync()
+    {
+        CancelDeleteConfirm();
+        savedCts?.Cancel();
+        savedCts?.Dispose();
+
+        try
+        {
+            if (previewReady)
+                await JS.InvokeVoidAsync("SignageBoard.dispose", previewStage);
+
+            if (boardModule is not null)
+                await boardModule.DisposeAsync();
+        }
+        catch (Exception ex) when (ex is JSException or JSDisconnectedException or TaskCanceledException)
+        {
+        }
+    }
 
     private sealed record AlertMessage(string Text, bool IsError);
 }

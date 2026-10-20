@@ -428,6 +428,61 @@ label {
     outline-offset: 2px;
 }
 
+.preview-card {
+    width: min(900px, calc(100vw - 2rem));
+    margin-left: calc((100% - min(900px, calc(100vw - 2rem))) / 2);
+}
+
+.preview-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    margin-bottom: 1rem;
+    overflow: hidden;
+    background: #000000;
+    border-radius: 10px;
+}
+
+.scale-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.scale-row label {
+    margin: 0;
+}
+
+.saved {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--ok);
+}
+
+.slider {
+    display: block;
+    width: 100%;
+    height: 2.75rem;
+    margin: 0.25rem 0 0.5rem;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.slider:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+}
+
+.preview-actions {
+    margin-bottom: 1rem;
+}
+
+.preview-drafts {
+    padding-top: 1rem;
+    border-top: 1px solid var(--line);
+}
+
 .note-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;

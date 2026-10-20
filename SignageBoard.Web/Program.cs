@@ -87,14 +87,23 @@ namespace SignageBoard.Web
                         CreatedAt TEXT NOT NULL,
                         UpdatedAt TEXT NOT NULL,
                         Status INTEGER NOT NULL DEFAULT 0);
-                    CREATE TABLE IF NOT EXISTS BoardState (Id INTEGER PRIMARY KEY CHECK (Id = 1), Version INTEGER NOT NULL, SingleNoteMode INTEGER NOT NULL DEFAULT 0);
+                    CREATE TABLE IF NOT EXISTS BoardState (Id INTEGER PRIMARY KEY CHECK (Id = 1), Version INTEGER NOT NULL, SingleNoteMode INTEGER NOT NULL DEFAULT 0, FontScale INTEGER NOT NULL DEFAULT 100);
                     INSERT OR IGNORE INTO BoardState (Id, Version) VALUES (1, 0);
                     """);
 
-                var hasSingleNoteMode = conn.ExecuteScalar<long>(
-                    "SELECT COUNT(*) FROM pragma_table_info('BoardState') WHERE name = 'SingleNoteMode'") > 0;
-                if (!hasSingleNoteMode)
-                    conn.Execute("ALTER TABLE BoardState ADD COLUMN SingleNoteMode INTEGER NOT NULL DEFAULT 0");
+                (string Name, string Definition)[] boardStateColumns =
+                [
+                    ("SingleNoteMode", "INTEGER NOT NULL DEFAULT 0"),
+                    ("FontScale", "INTEGER NOT NULL DEFAULT 100")
+                ];
+
+                foreach (var column in boardStateColumns)
+                {
+                    var exists = conn.ExecuteScalar<long>(
+                        "SELECT COUNT(*) FROM pragma_table_info('BoardState') WHERE name = @Name", new { column.Name }) > 0;
+                    if (!exists)
+                        conn.Execute($"ALTER TABLE BoardState ADD COLUMN {column.Name} {column.Definition}");
+                }
             }
 
             var board = app.MapGroup("/api/board");

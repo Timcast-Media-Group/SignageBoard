@@ -1,0 +1,126 @@
+.sb-stage {
+    --scale: 1;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    transform-origin: top left;
+    background: #000000;
+    color: #fafaf7;
+    font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+    line-height: normal;
+    text-align: left;
+    -webkit-font-smoothing: antialiased;
+}
+
+.sb-stage,
+.sb-stage *,
+.sb-stage *::before,
+.sb-stage *::after {
+    box-sizing: border-box;
+}
+
+.sb-board {
+    position: absolute;
+    top: 108px;
+    right: 77px;
+    bottom: 43px;
+    left: 77px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45em;
+    font-size: calc(92px * var(--scale));
+}
+
+.sb-board.sb-single {
+    justify-content: center;
+    font-size: calc(172px * var(--scale));
+}
+
+.sb-board.sb-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-content: start;
+    column-gap: 0.6em;
+    row-gap: 0.45em;
+}
+
+.sb-note {
+    margin: 0;
+    padding: 0.32em 0.55em 0.38em;
+    font-weight: 600;
+    line-height: 1.18;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: #12161c;
+    border-left: 0.2em solid #3b434e;
+    border-radius: 0.18em;
+}
+
+.sb-note.sb-important {
+    border-left-color: #ffb22e;
+}
+
+.sb-note.sb-urgent {
+    background: #2b0d0b;
+    border-left-color: #ff4438;
+}
+
+.sb-note.sb-draft {
+    color: #c9ced5;
+    background: transparent;
+    outline: 0.05em dashed #8a929d;
+    outline-offset: -0.05em;
+}
+
+.sb-tags {
+    display: flex;
+    gap: 0.6em;
+    margin-bottom: 0.3em;
+    font-size: 0.4em;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    white-space: normal;
+}
+
+.sb-tag-important {
+    color: #ffb22e;
+}
+
+.sb-tag-urgent {
+    color: #ff4438;
+}
+
+.sb-tag-draft {
+    padding: 0 0.45em;
+    color: #0b0d11;
+    background: #c9ced5;
+    border-radius: 0.2em;
+}
+
+.sb-clock {
+    position: absolute;
+    top: 32px;
+    right: 77px;
+    font-size: 49px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #9aa1ab;
+}
+
+.sb-empty {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 54px;
+    font-weight: 600;
+    color: #4a515b;
+}
