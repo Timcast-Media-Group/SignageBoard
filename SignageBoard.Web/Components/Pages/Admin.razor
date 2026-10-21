@@ -1,4 +1,5 @@
-﻿@page "/admin"
+﻿@attribute [Authorize(Policy = "Editors")]
+@page "/admin"
 @rendermode InteractiveServer
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
@@ -10,7 +11,6 @@
 @inject NoteService Notes
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
-@inject IWebHostEnvironment Env
 @inject IOptions<BoardOptions> Options
 @inject ILogger<Admin> Logger
 
@@ -491,10 +491,11 @@
         var state = await AuthState.GetAuthenticationStateAsync();
         var user = state.User;
 
-        if (user.Identity?.IsAuthenticated == true)
-            return user.FindFirst("preferred_username")?.Value;
+        if (user.Identity?.IsAuthenticated != true)
+            return null;
 
-        return Env.IsDevelopment() ? "dev" : null;
+        var username = user.FindFirst("preferred_username")?.Value;
+        return string.IsNullOrWhiteSpace(username) ? null : username;
     }
 
     private async Task LoadAsync()

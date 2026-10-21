@@ -5,6 +5,9 @@ using SignageBoard.Web.Data;
 using SignageBoard.Web.Services;
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.Identity.Web;
+using Microsoft.Identity.Web.UI;
 
 namespace SignageBoard.Web
 {
@@ -43,35 +46,54 @@ namespace SignageBoard.Web
             //        o.KnownProxies.Add(IPAddress.Parse(ip));
             //});
 
+            builder.Services
+                .AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
+                .AddMicrosoftIdentityWebApp(builder.Configuration.GetSection("AzureAd"));
+
+            builder.Services.AddControllersWithViews().AddMicrosoftIdentityUI();
+
+            builder.Services.AddAuthorization(o =>
+            {
+                var groupId = builder.Configuration["Board:EditorGroupId"]!;
+                o.AddPolicy("Editors", p => p.RequireClaim("groups", groupId));
+            });
+
+            builder.Services.AddCascadingAuthenticationState();
+
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
-            if (!app.Environment.IsDevelopment())
+            if (app.Environment.IsDevelopment())
             {
-                app.UseExceptionHandler("/Error");
-                // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
-                app.UseHsts();
-                app.MapOpenApi(); // serves /openapi/v1.json
+                app.MapOpenApi();
                 app.UseSwaggerUI(o =>
                 {
                     o.SwaggerEndpoint("/openapi/v1.json", "SignageBoard v1");
-                    o.RoutePrefix = "swagger"; // UI at /swagger
+                    o.RoutePrefix = "swagger";
                 });
             }
             else
             {
-                app.UseExceptionHandler("/Error");
+                app.UseExceptionHandler("/Error", createScopeForErrors: true);
                 app.UseHsts();
             }
 
             app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
             app.UseHttpsRedirection();
 
+            app.UseAuthentication();
+            app.UseAuthorization();
             app.UseAntiforgery();
 
             app.MapStaticAssets();
             app.MapRazorComponents<App>()
                 .AddInteractiveServerRenderMode();
+
+            app.MapControllers();
+
+            app.MapGet("/display", () => Results.Redirect("/display/index.html"))
+                .AllowAnonymous()
+                .ExcludeFromDescription();
 
             using (var conn = app.Services.GetRequiredService<SqliteConnectionFactory>().Create())
             {
@@ -128,13 +150,17 @@ namespace SignageBoard.Web
             .WithSummary("Current board snapshot for the TV display")
             .Produces<BoardSnapshot>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status304NotModified)
+            .AllowAnonymous()
             .AddEndpointFilter<DisplayGateFilter>();
 
             board.MapGet("/notes", (NoteService svc) => svc.GetActiveAsync());
 
             board.MapPost("/notes", async (CreateNoteDto dto, NoteService svc, ClaimsPrincipal user) =>
             {
-                var createdBy = user.FindFirst("preferred_username")?.Value ?? "dev";
+                var createdBy = user.FindFirst("preferred_username")?.Value;
+                if (string.IsNullOrWhiteSpace(createdBy))
+                    return Results.Problem("Your account has no preferred_username claim, so the note can't be attributed.", statusCode: StatusCodes.Status403Forbidden);
+
                 try
                 {
                     var note = await svc.CreateNoteAsync(dto, createdBy);
@@ -147,7 +173,9 @@ namespace SignageBoard.Web
             })
             .WithName("CreateNote")
             .Produces<Note>(StatusCodes.Status201Created)
-            .ProducesValidationProblem();
+            .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status403Forbidden)
+            .RequireAuthorization("Editors");
 
             board.MapPost("/notes/{id}/publish", async (string id, NoteService svc) =>
             {
@@ -169,7 +197,8 @@ namespace SignageBoard.Web
             .WithSummary("Publish a note to the board")
             .Produces<Note>(StatusCodes.Status200OK)
             .ProducesValidationProblem()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireAuthorization("Editors");
 
             board.MapPost("/notes/{id}/unpublish", async (string id, NoteService svc) =>
             {
@@ -191,7 +220,8 @@ namespace SignageBoard.Web
             .WithSummary("Return a note to draft")
             .Produces<Note>(StatusCodes.Status200OK)
             .ProducesValidationProblem()
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status404NotFound)
+            .RequireAuthorization("Editors");
 
             app.Run();
         }
