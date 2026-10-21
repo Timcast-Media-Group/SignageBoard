@@ -365,3 +365,7 @@ FodyWeavers.xsd
 /SignageBoard.Web/noticeboard.db
 /SignageBoard.Web/noticeboard.db-shm
 /SignageBoard.Web/noticeboard.db-wal
+
+.env
+!.env.example
+/SignageBoard.Web/App_Data/

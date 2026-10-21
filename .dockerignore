@@ -1,0 +1,15 @@
+**/bin
+**/obj
+**/.vs
+.git
+.gitignore
+**/.env
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/secrets.json
+**/UserSecrets
+**/node_modules
+**/App_Data
+docker-compose.yml
+README.md

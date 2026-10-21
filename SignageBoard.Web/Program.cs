@@ -5,7 +5,10 @@ using SignageBoard.Web.Data;
 using SignageBoard.Web.Services;
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
+using System.Net;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
 
@@ -38,13 +41,29 @@ namespace SignageBoard.Web
             //    .AddMicrosoftIdentityWebApp(builder.Configuration.GetSection("AzureAd"));
 
             var connString = builder.Configuration.GetConnectionString("Board");
+            var dataSource = new SqliteConnectionStringBuilder(connString).DataSource;
+            if (!string.IsNullOrWhiteSpace(dataSource) && dataSource != ":memory:")
+            {
+                var dataDirectory = Path.GetDirectoryName(Path.GetFullPath(dataSource));
+                if (!string.IsNullOrEmpty(dataDirectory))
+                    Directory.CreateDirectory(dataDirectory);
+            }
 
-            //builder.Services.Configure<ForwardedHeadersOptions>(o =>
-            //{
-            //    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-            //    foreach (var ip in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
-            //        o.KnownProxies.Add(IPAddress.Parse(ip));
-            //});
+            var keysPath = builder.Configuration["DataProtection:KeysPath"];
+            builder.Services.AddDataProtection()
+                .PersistKeysToFileSystem(Directory.CreateDirectory(string.IsNullOrWhiteSpace(keysPath) ? "/data/keys" : keysPath))
+                .SetApplicationName("SignageBoard");
+
+            builder.Services.AddHealthChecks();
+
+            builder.Services.Configure<ForwardedHeadersOptions>(o =>
+            {
+                o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+                foreach (var ip in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+                    o.KnownProxies.Add(IPAddress.Parse(ip));
+                foreach (var network in builder.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
+                    o.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
+            });
 
             builder.Services
                 .AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
@@ -63,6 +82,8 @@ namespace SignageBoard.Web
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
+            app.UseForwardedHeaders();
+
             if (app.Environment.IsDevelopment())
             {
                 app.MapOpenApi();
@@ -76,10 +97,10 @@ namespace SignageBoard.Web
             {
                 app.UseExceptionHandler("/Error", createScopeForErrors: true);
                 app.UseHsts();
+                app.UseHttpsRedirection();
             }
 
             app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-            app.UseHttpsRedirection();
 
             app.UseAuthentication();
             app.UseAuthorization();
@@ -91,9 +112,11 @@ namespace SignageBoard.Web
 
             app.MapControllers();
 
-            app.MapGet("/display", () => Results.Redirect("/display/index.html"))
+            app.MapGet("/display", (HttpContext http) => Results.Redirect("/display/index.html" + http.Request.QueryString))
                 .AllowAnonymous()
                 .ExcludeFromDescription();
+
+            app.MapHealthChecks("/healthz").AllowAnonymous();
 
             using (var conn = app.Services.GetRequiredService<SqliteConnectionFactory>().Create())
             {

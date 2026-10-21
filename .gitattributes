@@ -61,3 +61,8 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+Dockerfile text eol=lf
+*.yml text eol=lf
+.env* text eol=lf
+.dockerignore text eol=lf

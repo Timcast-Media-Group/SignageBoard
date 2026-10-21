@@ -1,0 +1,17 @@
+services:
+  signageboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: signageboard:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - signageboard-data:/data
+
+volumes:
+  signageboard-data:
