@@ -13,7 +13,8 @@
         timeZone: "America/New_York",
         weekday: "short",
         hour: "numeric",
-        minute: "2-digit"
+        minute: "2-digit",
+        second: "2-digit"
     });
 
     const states = new WeakMap();
