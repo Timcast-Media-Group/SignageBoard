@@ -11,5 +11,8 @@
 **/UserSecrets
 **/node_modules
 **/App_Data
+**/appsettings.Development.json
+**/*.user
+.env.example
 docker-compose.yml
 README.md

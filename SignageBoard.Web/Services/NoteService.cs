@@ -108,7 +108,7 @@ namespace SignageBoard.Web.Services
             tx.Commit();
         }
 
-        public async Task<Note> CreateNoteAsync(CreateNoteDto dto, string createdBy)
+        public async Task<Note> CreateNoteAsync(CreateNoteDto dto, string createdBy, string? createdByName = null)
         {
             var body = dto.Body?.Trim() ?? "";
             if (body.Length == 0 || body.Length > _opts.Value.MaxNoteLength)
@@ -140,14 +140,15 @@ namespace SignageBoard.Web.Services
                 SortOrder = nextSort,
                 ExpiresAt = expiresUtc,
                 CreatedBy = createdBy,
+                CreatedByName = string.IsNullOrWhiteSpace(createdByName) ? null : createdByName.Trim(),
                 CreatedAt = now,
                 UpdatedAt = now,
                 Status = dto.Publish ? NoteStatus.Published : NoteStatus.Draft
             };
 
             await conn.ExecuteAsync("""
-                INSERT INTO Notes (Id, Body, Priority, SortOrder, ExpiresAt, CreatedBy, CreatedAt, UpdatedAt, Status)
-                VALUES (@Id, @Body, @Priority, @SortOrder, @ExpiresAt, @CreatedBy, @CreatedAt, @UpdatedAt, @Status)
+                INSERT INTO Notes (Id, Body, Priority, SortOrder, ExpiresAt, CreatedBy, CreatedByName, CreatedAt, UpdatedAt, Status)
+                VALUES (@Id, @Body, @Priority, @SortOrder, @ExpiresAt, @CreatedBy, @CreatedByName, @CreatedAt, @UpdatedAt, @Status)
                 """, newNote, tx);
 
             await conn.ExecuteAsync(

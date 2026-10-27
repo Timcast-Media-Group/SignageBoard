@@ -277,11 +277,13 @@
         if (busy || !editContext.Validate())
             return;
 
+        var firstName = UserNames.FirstName((await AuthState.GetAuthenticationStateAsync()).User);
+
         await RunAsync(async author =>
         {
             model.ExpiresAt = ToBoardOffset(expiresLocal);
             model.Publish = publish;
-            await Notes.CreateNoteAsync(model, author);
+            await Notes.CreateNoteAsync(model, author, firstName);
             ResetForm();
         }, publish ? "Note published." : "Draft saved.");
     }

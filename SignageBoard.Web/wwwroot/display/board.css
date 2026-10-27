@@ -101,6 +101,16 @@
     border-radius: 0.2em;
 }
 
+.sb-byline {
+    margin-top: 0.35em;
+    font-size: 0.42em;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: normal;
+    font-variant-numeric: tabular-nums;
+    color: #9aa1ab;
+}
+
 .sb-clock {
     position: absolute;
     top: 32px;

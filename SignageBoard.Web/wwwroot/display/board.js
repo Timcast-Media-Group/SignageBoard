@@ -17,6 +17,15 @@
         second: "2-digit"
     });
 
+    const sentFormat = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+    });
+
     const states = new WeakMap();
 
     function element(tag, className, text) {
@@ -55,12 +64,23 @@
         return state;
     }
 
-    function expiryTime(note) {
-        const value = note.expiresAt;
+    function utcTime(value) {
         if (!value) return null;
         const hasZone = /([zZ]|[+-]\d\d:?\d\d)$/.test(value);
         const time = Date.parse(hasZone ? value : value + "Z");
         return Number.isNaN(time) ? null : time;
+    }
+
+    function expiryTime(note) {
+        return utcTime(note.expiresAt);
+    }
+
+    function byline(note) {
+        const parts = [];
+        if (note.createdByName) parts.push(note.createdByName);
+        const sent = utcTime(note.createdAt);
+        if (sent !== null) parts.push(sentFormat.format(new Date(sent)));
+        return parts.join(" · ");
     }
 
     function visibleNotes(state, now) {
@@ -102,6 +122,9 @@
         }
 
         card.appendChild(element("span", "sb-body", note.body || ""));
+
+        const meta = byline(note);
+        if (meta) card.appendChild(element("div", "sb-byline", meta));
         return card;
     }
 

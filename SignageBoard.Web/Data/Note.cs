@@ -8,6 +8,7 @@
         public int SortOrder { get; set; }
         public DateTime? ExpiresAt { get; set; }
         public string CreatedBy { get; set; }
+        public string? CreatedByName { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
         public NoteStatus Status { get; set; } = NoteStatus.Draft;

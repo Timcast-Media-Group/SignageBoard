@@ -129,6 +129,7 @@ namespace SignageBoard.Web
                         SortOrder INTEGER NOT NULL DEFAULT 0,
                         ExpiresAt TEXT NULL,
                         CreatedBy TEXT NOT NULL,
+                        CreatedByName TEXT NULL,
                         CreatedAt TEXT NOT NULL,
                         UpdatedAt TEXT NOT NULL,
                         Status INTEGER NOT NULL DEFAULT 0);
@@ -149,6 +150,11 @@ namespace SignageBoard.Web
                     if (!exists)
                         conn.Execute($"ALTER TABLE BoardState ADD COLUMN {column.Name} {column.Definition}");
                 }
+
+                var hasCreatedByName = conn.ExecuteScalar<long>(
+                    "SELECT COUNT(*) FROM pragma_table_info('Notes') WHERE name = 'CreatedByName'") > 0;
+                if (!hasCreatedByName)
+                    conn.Execute("ALTER TABLE Notes ADD COLUMN CreatedByName TEXT NULL");
             }
 
             var board = app.MapGroup("/api/board");
@@ -186,7 +192,7 @@ namespace SignageBoard.Web
 
                 try
                 {
-                    var note = await svc.CreateNoteAsync(dto, createdBy);
+                    var note = await svc.CreateNoteAsync(dto, createdBy, UserNames.FirstName(user));
                     return Results.Created($"/api/board/notes/{note.Id}", note);
                 }
                 catch (ValidationException ex)
