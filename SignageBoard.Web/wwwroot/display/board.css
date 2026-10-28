@@ -24,7 +24,7 @@
 
 .sb-board {
     position: absolute;
-    top: 108px;
+    top: 136px;
     right: 77px;
     bottom: 43px;
     left: 77px;
@@ -115,8 +115,9 @@
     position: absolute;
     top: 32px;
     right: 77px;
-    font-size: 49px;
+    font-size: 76px;
     font-weight: 600;
+    line-height: 1;
     font-variant-numeric: tabular-nums;
     color: #9aa1ab;
 }
