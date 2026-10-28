@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     image: signageboard:latest
     restart: unless-stopped
-    env_file: .env
+    env_file: board.env
     environment:
       ASPNETCORE_ENVIRONMENT: Production
     ports:
