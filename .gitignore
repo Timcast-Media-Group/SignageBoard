@@ -369,3 +369,4 @@ FodyWeavers.xsd
 .env
 !.env.example
 /SignageBoard.Web/App_Data/
+board.env

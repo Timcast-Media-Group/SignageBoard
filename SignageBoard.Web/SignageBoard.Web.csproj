@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
     <DisableBuildCompression>true</DisableBuildCompression>
+    <!-- The Dockerfile restores before the .razor files are copied, so the SDK can't detect Blazor and skips blazor.web.js. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
   </PropertyGroup>
 
   <ItemGroup>
